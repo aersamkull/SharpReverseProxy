@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
 using System.Threading.Tasks;
@@ -37,7 +38,7 @@ namespace SharpReverseProxy {
             }
 
             var proxyRequest = new HttpRequestMessage(new HttpMethod(context.Request.Method), uri);
-            var client = matchedRule.GetClient != null ? matchedRule.GetClient(proxyRequest, context.User): _httpClient;
+            var client = matchedRule.GetClient != null ? matchedRule.GetClient(context.Request, context.User): _httpClient;
             SetProxyRequestBody(proxyRequest, context);
             SetProxyRequestHeaders(proxyRequest, context);
             
@@ -48,7 +49,7 @@ namespace SharpReverseProxy {
                 : proxyRequest.RequestUri.Host;
             
             try {
-                await ProxyTheRequest(client, context, proxyRequest, matchedRule);
+                await ProxyTheRequest(client, context, proxyRequest, matchedRule, matchedRule.HeadersToRemove);
             }
             catch (HttpRequestException err) {
                 matchedRule.ErrorHandler?.Invoke(err);
@@ -57,7 +58,8 @@ namespace SharpReverseProxy {
             _options.Reporter.Invoke(resultBuilder.Proxied(proxyRequest.RequestUri, context.Response.StatusCode));
         }
 
-        private async Task ProxyTheRequest(HttpClient httpClient, HttpContext context, HttpRequestMessage proxyRequest, ProxyRule proxyRule) {
+        private async Task ProxyTheRequest(HttpClient httpClient, HttpContext context, HttpRequestMessage proxyRequest, ProxyRule proxyRule,
+                IEnumerable<string> headersToRemove) {
             using (var responseMessage = await httpClient.SendAsync(proxyRequest,
                                                                      HttpCompletionOption.ResponseHeadersRead,
                                                                      context.RequestAborted)) {
@@ -68,9 +70,11 @@ namespace SharpReverseProxy {
                     foreach (var header in responseMessage.Headers) {
                         context.Response.Headers[header.Key] = header.Value.ToArray();
                     }
-                    // SendAsync removes chunking from the response. 
-                    // This removes the header so it doesn't expect a chunked response.
-                    context.Response.Headers.Remove("transfer-encoding");
+                    foreach(var h in headersToRemove)
+                    {
+                        context.Response.Headers.Remove(h);
+                    }
+                    
 
                     if (responseMessage.Content != null) {
                         foreach (var contentHeader in responseMessage.Content.Headers) {
