@@ -37,26 +37,28 @@ namespace SharpReverseProxy {
             }
 
             var proxyRequest = new HttpRequestMessage(new HttpMethod(context.Request.Method), uri);
+            var client = matchedRule.GetClient != null ? matchedRule.GetClient(proxyRequest, context.User): _httpClient;
             SetProxyRequestBody(proxyRequest, context);
             SetProxyRequestHeaders(proxyRequest, context);
-
+            
             matchedRule.Modifier.Invoke(proxyRequest, context.User);
 
             proxyRequest.Headers.Host = !proxyRequest.RequestUri.IsDefaultPort 
                 ? $"{proxyRequest.RequestUri.Host}:{proxyRequest.RequestUri.Port}"
                 : proxyRequest.RequestUri.Host;
-
+            
             try {
-                await ProxyTheRequest(context, proxyRequest, matchedRule);
+                await ProxyTheRequest(client, context, proxyRequest, matchedRule);
             }
-            catch (HttpRequestException) {
-                context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+            catch (HttpRequestException err) {
+                matchedRule.ErrorHandler?.Invoke(err);
+                context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;                
             }
             _options.Reporter.Invoke(resultBuilder.Proxied(proxyRequest.RequestUri, context.Response.StatusCode));
         }
 
-        private async Task ProxyTheRequest(HttpContext context, HttpRequestMessage proxyRequest, ProxyRule proxyRule) {
-            using (var responseMessage = await _httpClient.SendAsync(proxyRequest,
+        private async Task ProxyTheRequest(HttpClient httpClient, HttpContext context, HttpRequestMessage proxyRequest, ProxyRule proxyRule) {
+            using (var responseMessage = await httpClient.SendAsync(proxyRequest,
                                                                      HttpCompletionOption.ResponseHeadersRead,
                                                                      context.RequestAborted)) {
 
